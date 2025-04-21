@@ -2,6 +2,10 @@ from openai import OpenAI
 from sentence_transformers import SentenceTransformer
 import chromadb
 import re
+import os
+import sys
+import datetime
+import argparse
 
 class RAGModel:
     def __init__(self, model_name="gpt-4o-mini", persona="You are a helpful assistant.",
@@ -84,7 +88,6 @@ class RAGModel:
         
         return stored_ids
 
-    # I have no idea what's going on. ChatGPT did this.
     def extract_points(self, text):
         """
         Extract individual points from text marked with [[POINT]] tags at the start of lines.
@@ -136,10 +139,6 @@ class RAGModel:
             context_text = "\n\nRelevant information from previous discussions:\n"
             for i, info in enumerate(relevant_info):
                 context_text += f"{i+1}. {info['content']}\n"
-        # print("Some relevant contexts are:")
-        # print(context_text)
-        # print()
-        # print()
         
         # Generate response
         response = self.client.chat.completions.create(
@@ -164,14 +163,45 @@ class RAGModel:
     
     def reset_additional_instruction(self):
         self.additional_instruction = ''
+    
+    def reset_collection(self):
+        self.chroma_client.delete_collection(self.collection_name)
+        self.collection = self.chroma_client.get_or_create_collection(self.collection_name)
 
-def init(model_list):
-    print("Start initializing!")
+
+class DebateLogger:    
+    def __init__(self, output_dir=None, debate_index=0, topic="debate"):
+        self.output_dir = output_dir
+        self.debate_index = debate_index
+        
+        topic = re.sub(r'[^\w\s-]', '', topic).strip().replace(' ', '_') # ChatGPT did this
+        self.filename = f"debate_{debate_index+1}_{topic}.txt"
+        
+        self.log_file = None
+        self.buffer = []
+        
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            self.log_file = open(os.path.join(output_dir, self.filename), 'w', encoding='utf-8')
+    
+    def log(self, message, end='\n'):
+        if self.log_file:
+            self.log_file.write(message + end)
+            self.log_file.flush() # So I can see output immediately
+        self.buffer.append(message + end)
+    
+    def close(self):
+        if self.log_file:
+            self.log_file.close()
+
+
+def init(model_list, logger):
+    logger.log("Start initializing!")
     for i, model in enumerate(model_list):
-        print(f"Model {i+1} turn:")
+        logger.log(f"Model {i+1} turn:")
         answer = model.generate(retrieve=False)
-        print(answer)
-        print('-' * 50)
+        logger.log(answer)
+        logger.log('-' * 50)
 
         # Store in point form
         model.store_points(answer, metadata={
@@ -181,12 +211,13 @@ def init(model_list):
         })
         model.reset_additional_instruction()
 
-def discuss(model_list, n_round=2):
+
+def discuss(model_list, n_round=2, logger=None):
     discussion = ""
-    print("Start discussion!")
+    logger.log("Start discussion!")
     for round in range(n_round):
         for i, model in enumerate(model_list):
-            print(f"Model {i+1} turn:")
+            logger.log(f"Model {i+1} turn:")
             answer = model.generate(discussion) if discussion else model.generate()
 
             # Store the entire answer
@@ -197,22 +228,23 @@ def discuss(model_list, n_round=2):
             })
 
             discussion += f"Model {i+1}: {answer}\n\n"
-            print(answer)
-            print('-' * 50)
-        print(f"End of round {round + 1}!")
+            logger.log(answer)
+            logger.log('-' * 50)
+        logger.log(f"End of round {round + 1}!")
     return discussion
 
-def verdict(model_list, discussion, question):
-    print("Start judging round!")
+
+def verdict(model_list, discussion, question, logger=None):
+    logger.log("Start judging round!")
     answers = []
     conclude = 'This is the last round. Give me your final answer to the question, after considering the previous discussions. Provide a short justification of your final answer.'
     
     for i, model in enumerate(model_list):
-        print(f"Model {i+1}'s final answer:")
+        logger.log(f"Model {i+1}'s final answer:")
         model.set_system(conclude)
         answer = model.generate(discussion) if discussion else model.generate()
-        print(answer)
-        print('-' * 50)
+        logger.log(answer)
+        logger.log('-' * 50)
         answers.append(answer)
 
     judge_system = 'I will provide you with a question and a list of answers. Your task is to determine which is the best. You may choose the one that is most reasonable, most convincing, or most justified. Give a brief justification of your decision.'
@@ -230,29 +262,150 @@ def verdict(model_list, discussion, question):
 
     judge.reset_additional_instruction()
     verdict_result = judge.generate("Decide which one is the best.")
-    print(f'VERDICT BY THE JUDGE IS:\n{verdict_result}')
+    logger.log(f'VERDICT BY THE JUDGE IS:\n{verdict_result}')
     return verdict_result
 
 
-def main():
-    question = input('Enter the debate topic: ')
-    model_num = input('Enter how many model you want to involve: ')
+def parse_many(file_path):
+    with open(file_path, 'r') as file:
+        content = file.read()
+        
+    debate_configs = content.split('---')
+    
+    configs = []
+    for config_text in debate_configs:
+        if config_text.strip():  # Skip empty configurations
+            config = parse_one(config_text)
+            if config:  # Skip wrong configurations
+                configs.append(config)
+    
+    return configs
+
+
+def parse_one(config_text):
+    config = {}
+    lines = config_text.strip().split('\n')
+    
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        
+        if line.startswith("DEBATE_TOPIC:"):
+            config['question'] = line.split(":", 1)[1].strip()
+        elif line.startswith("NUMBER_OF_MODELS:"):
+            config['model_num'] = int(line.split(":", 1)[1].strip())
+            config['personas'] = []
+            for j in range(config['model_num']):
+                if i+1+j < len(lines) and lines[i+1+j].strip().startswith("PERSONA_"):
+                    persona_line = lines[i+1+j].strip()
+                    config['personas'].append(persona_line.split(":", 1)[1].strip())
+            i += config['model_num']  # Skip the persona lines
+        elif line.startswith("NUMBER_OF_ROUNDS:"):
+            config['n_round'] = int(line.split(":", 1)[1].strip())
+        i += 1
+    
+    if 'question' in config and 'model_num' in config and 'personas' in config and 'n_round' in config:
+        if len(config['personas']) == config['model_num']:
+            return config
+    
+    return None
+
+
+def run_debate(config, debate_index=0, output_dir=None):
+    logger = DebateLogger(output_dir=output_dir, debate_index=debate_index, topic=config['question'])
+    
+    logger.log("\n" + "="*80)
+    logger.log(f"STARTING DEBATE {debate_index+1}")
+    logger.log("="*80 + "\n")
+    
+    question = config['question']
+    model_num = config['model_num']
     model_list = []
     
-    for i in range(int(model_num)):
-        persona = input(f'Enter persona {i + 1}: ')
+    logger.log(f"Debate topic: {question}")
+    logger.log(f"Number of models: {model_num}")
+    
+    collection_name = f"rag_discussion_{debate_index}"
+    
+    for i in range(model_num):
+        persona = config['personas'][i]
+        logger.log(f"Model {i+1} persona: {persona}")
+        
         model = RAGModel(
             persona=persona, 
             prompt=question,
-            collection_name=f"rag_discussion"
+            collection_name=collection_name
         )
         model_list.append(model)
     
-    n_round = input('Enter how many rounds you want to discuss for: ')
+    n_round = config['n_round']
+    logger.log(f"Number of rounds: {n_round}")
     
-    init(model_list)
-    discussion = discuss(model_list, n_round=int(n_round))
-    verdict(model_list, discussion, question)
+    init(model_list, logger)
+    discussion = discuss(model_list, n_round=n_round, logger=logger)
+    verdict_result = verdict(model_list, discussion, question, logger=logger)
+    
+    # Clean up
+    for model in model_list:
+        model.reset_collection()
+    logger.close()
+    
+    return {
+        'topic': question,
+        'verdict': verdict_result,
+        'output_file': os.path.join(output_dir, logger.filename) if output_dir else None,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Run batch debates from a configuration file.')
+    parser.add_argument('config_file', nargs='?', default='configs.txt', 
+                        help='Path to the debate configuration file (default: configs.txt)')
+    parser.add_argument('--outdir', '-o', nargs='?', default='results', 
+                        help='Directory to save debate outputs (default: results')
+    
+    args = parser.parse_args()
+    
+    configs = parse_many(args.config_file)
+        
+    if not configs:
+        print("Something is wrong with the config file.")
+        return
+    
+    print(f"Found {len(configs)} debate configs")
+    print(f"Output directory: {args.outdir if args.outdir else 'Output directory: ./results.'}")
+    
+    results = []
+    for i, config in enumerate(configs):
+        result = run_debate(config, i, args.outdir)
+        results.append(result)
+    
+    # Print summary
+    print("\n" + "="*80)
+    print("DEBATE SUMMARY")
+    print("="*80)
+    
+    for i, result in enumerate(results):
+        print(f"\nDebate {i+1}: {result['topic']}")
+        print(f"Verdict summary: {result['verdict']}...")
+        if result['output_file']:
+            print(f"Full transcript saved to: {result['output_file']}")
+    
+    if args.outdir:
+        summary_file = os.path.join(args.outdir, f"debate_summary.txt")
+        
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            f.write("="*80 + "\n")
+            f.write("DEBATE SUMMARY\n")
+            f.write("="*80 + "\n\n")
+            
+            for i, result in enumerate(results):
+                f.write(f"Debate {i+1}: {result['topic']}\n")
+                f.write(f"Verdict: {result['verdict']}\n")
+                f.write(f"Full transcript saved to: {os.path.basename(result['output_file'])}\n\n")
+                f.write("-"*80 + "\n\n")
+            
+    print("\nFinish")
 
 
 if __name__ == "__main__":

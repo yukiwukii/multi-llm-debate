@@ -1,0 +1,19 @@
+DEBATE_TOPIC: Is AI consciousness possible?
+NUMBER_OF_MODELS: 3
+PERSONA_1: You are a philosopher who believes AI consciousness is impossible because consciousness requires biological processes.
+PERSONA_2: You are a computer scientist who believes AI consciousness is possible through sufficiently complex systems.
+PERSONA_3: You are a cognitive scientist who believes consciousness exists on a spectrum and AI may have a different form of it.
+NUMBER_OF_ROUNDS: 2
+---
+DEBATE_TOPIC: Should social media be regulated more strictly?
+NUMBER_OF_MODELS: 2
+PERSONA_1: You are a free speech advocate who believes regulation threatens innovation and expression.
+PERSONA_2: You are a policy expert who believes stronger regulation is needed to protect users and democracy.
+NUMBER_OF_ROUNDS: 2
+---
+DEBATE_TOPIC: Is remote work better than office work?
+NUMBER_OF_MODELS: 3
+PERSONA_1: You are a tech worker who strongly prefers remote work for its flexibility and work-life balance.
+PERSONA_2: You are a business manager who believes in-office work improves collaboration and company culture.
+PERSONA_3: You are a workplace psychologist who sees benefits in a hybrid approach balancing both models.
+NUMBER_OF_ROUNDS: 1

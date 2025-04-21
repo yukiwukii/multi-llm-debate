@@ -1,6 +1,6 @@
 # multi LLM debate
 ## 🌏 Overview
-Are you like me? Do you also have an unquenchable desire to watch people fight? LLMs are too helpful these days, we need to make them more toxic. That's why I built `multi LLM debate`. Currently, it is running strictly on CLI, but maybe one day I will make it better. Maybe not.
+Are you like me? Do you also have an unquenchable desire to watch people fight? LLMs are too helpful these days, we need to make them more toxic. That's why I built `multi LLM debate`. ~~Currently, it is running strictly on CLI, but maybe one day I will make it better. Maybe not.~~ You can now input through `.txt` file and it will output to a specified `--outdir`.
 
 Basically, our debate consists of 3 stages:
 1. **Initialization**. Each LLM are given the opportunity to make their point without being affected by other LLMs. (One Round).
@@ -22,19 +22,15 @@ cd multi-llm-debate
 
 # Install the dependencies
 pip install -r requirements.txt
-
 ```
 2. Create a `.env` file consisting of your OpenAI API Key.
 ```bash
 OPENAI_API_KEY = 'your_api_key_here'
 ```
-3. Run the only script and have fun!
+3. Input your configurations (see `configs.txt` for an example).
+4. Run the only script and have fun!
 ```bash
-python debate.py
+python debate.py configs.txt --outdir output
 
-# Enter your debate topic.
-# Enter how many models you want to involve.
-# Enter the 'personality' of each LLM.
-# Enter the number of rounds of debate (suggestion: <5)
-# Enjoy the madness!
+# Results will be stored at ./output/
 ```
